@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <iostream>
 #include "src/include/pfm.h"
 
 namespace PeterDB {
@@ -21,7 +22,6 @@ namespace PeterDB {
             fclose(fileCheck);  // Close the file if it exists
             return 1;
         }
-
         FILE* file = fopen(fileName.c_str(), "w");
         if (file == nullptr) {
             return -1;  // File creation failed
@@ -32,15 +32,35 @@ namespace PeterDB {
     }
 
     RC PagedFileManager::destroyFile(const std::string &fileName) {
-        return -1;
+        if (remove(fileName.c_str()) == 0) {
+            return 0;
+        }
+        return 1;
     }
 
     RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandle) {
-        return -1;
+        // Check if the file exists
+        FILE* file = fopen(fileName.c_str(), "r");
+        if (file == nullptr) {
+            return -1;
+        }
+        // Check if fileHandle already has a file
+        if (fileHandle.file == nullptr) {
+            fileHandle.file = file;
+            return 0;
+        }
+        // fileHandle already has a file
+        return 1;
     }
 
     RC PagedFileManager::closeFile(FileHandle &fileHandle) {
-        return -1;
+        // If fileHandle has a file
+        if (fileHandle.file == nullptr){
+            return 1;
+        }
+        fclose(fileHandle.file);
+        // Flush all pages to disk TODO???
+        return 0;
     }
 
     FileHandle::FileHandle() {
