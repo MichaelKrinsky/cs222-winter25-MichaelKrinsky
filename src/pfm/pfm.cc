@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "src/include/pfm.h"
 
 namespace PeterDB {
@@ -15,7 +16,19 @@ namespace PeterDB {
     PagedFileManager &PagedFileManager::operator=(const PagedFileManager &) = default;
 
     RC PagedFileManager::createFile(const std::string &fileName) {
-        return -1;
+        FILE* fileCheck = fopen(fileName.c_str(), "r");
+        if (fileCheck != nullptr) {
+            fclose(fileCheck);  // Close the file if it exists
+            return 1;
+        }
+
+        FILE* file = fopen(fileName.c_str(), "w");
+        if (file == nullptr) {
+            return -1;  // File creation failed
+        }
+        fclose(file);  // Close the file after creation
+        return 0;
+
     }
 
     RC PagedFileManager::destroyFile(const std::string &fileName) {
