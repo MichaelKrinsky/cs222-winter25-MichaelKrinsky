@@ -2,6 +2,8 @@
 #include <iostream>
 #include "src/include/pfm.h"
 
+#include <unistd.h>
+
 namespace PeterDB {
     PagedFileManager &PagedFileManager::instance() {
         static PagedFileManager _pf_manager = PagedFileManager();
@@ -40,7 +42,7 @@ namespace PeterDB {
 
     RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandle) {
         // Check if the file exists
-        FILE* file = fopen(fileName.c_str(), "r");
+        FILE* file = fopen(fileName.c_str(), "r+");
         if (file == nullptr) {
             return -1;
         }
@@ -72,23 +74,109 @@ namespace PeterDB {
     FileHandle::~FileHandle() = default;
 
     RC FileHandle::readPage(PageNum pageNum, void *data) {
-        return -1;
+        // If file exists
+        if (!file) {
+            std::cerr << "Failed to open file: " << std::endl;
+            return 1;
+        }
+        fseek(file, 0, SEEK_END);
+        std::size_t offset = pageNum * PAGE_SIZE;  // Calculate the offset
+        if (fseek(file, offset, SEEK_SET) != 0) {     // Move the file pointer to the page
+            // If page doesn't exist
+            std::cerr << "Failed to seek to page " << pageNum << std::endl;
+            fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+            return 2;
+        }
+        std::size_t bytesRead = fread(data, 1, PAGE_SIZE, file);  // Read one page
+        if (bytesRead > 0) {
+            std::cout << "Read " << bytesRead << " bytes from page " << pageNum << std::endl;
+        } else {
+            std::cerr << "Failed to read data from page " << pageNum << std::endl;
+            fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+            return 1;
+        }
+        readPageCounter = readPageCounter + 1;
+        fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+        return 0;
     }
 
     RC FileHandle::writePage(PageNum pageNum, const void *data) {
-        return -1;
+        // If file exists
+        if (!file) {
+            std::cerr << "Failed to open file: " << std::endl;
+            return 1;
+        }
+        std::size_t offset = pageNum * PAGE_SIZE;  // Calculate the offset
+        fseek(file, 0, SEEK_END);
+        long fileSize = ftell(file);
+        std::cout << "writing to file with size: " << fileSize << std::endl;
+        fseek(file, 0, SEEK_SET);  // Reset cursor to start of file
+        // Check if pageNum is within the file
+        if (fileSize < offset + PAGE_SIZE) {
+            std::cout << "File size " << fileSize << " too small" << std::endl;
+            return 1;
+        }
+
+        if (fseek(file, offset, SEEK_SET) != 0) {
+            // Move the file pointer to the page
+            // If page doesn't exist
+            std::cerr << "Failed to seek to page " << pageNum << std::endl;
+            fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+            return 2;
+        }
+        size_t written = fwrite(data, 1, PAGE_SIZE, file); // 1 is the size of a byte
+        if (written != PAGE_SIZE) {
+            perror("Error writing to file");
+        }
+        writePageCounter = writePageCounter + 1;
+        std::cout << writePageCounter << std::endl;
+        return 0;
     }
 
     RC FileHandle::appendPage(const void *data) {
-        return -1;
+        if (!file) {
+            std::cerr << "Failed to open file: " << std::endl;
+            return 1;
+        }
+        // Move the file pointer to the end
+        if (fseek(file, 0, SEEK_END) != 0) {
+            std::cerr << "Failed to seek to end of file" << std::endl;
+            return 2;
+        }
+        // Write the 4096 bytes of data to the end
+        size_t written = fwrite(data, 1, PAGE_SIZE, file);
+        if (written != PAGE_SIZE) {
+            std::cerr << "Error writing " << written << std::endl;
+            return 3;
+        }
+        appendPageCounter = appendPageCounter + 1;
+        std::cout << "successfully appended page to file" << std::endl;
+        fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+        return 0;
     }
 
     unsigned FileHandle::getNumberOfPages() {
-        return -1;
+        const size_t bufferSize = 4096;  // Define page size
+        char buffer[bufferSize];         // Temporary buffer
+        size_t totalBytes = 0;
+        fseek(file, 0, SEEK_SET);
+        while (true) {
+            size_t bytesRead = fread(buffer, 1, bufferSize, file);
+            totalBytes += bytesRead;
+            if (bytesRead < bufferSize) {
+                break;  // Exit when fread reads less than the buffer size (end of file)
+            }
+        }
+        fseek(file, 0, SEEK_SET); // Reset cursor to start of file
+        return (totalBytes + PAGE_SIZE - 1) / PAGE_SIZE;
     }
 
     RC FileHandle::collectCounterValues(unsigned &readPageCount, unsigned &writePageCount, unsigned &appendPageCount) {
-        return -1;
+        readPageCount = readPageCounter;
+        writePageCount = writePageCounter;
+        appendPageCount = appendPageCounter;
+        std::cout << "Counter values: " << readPageCounter << " " << writePageCounter << " " << appendPageCounter << std::endl;
+        return 0;
     }
 
 } // namespace PeterDB
