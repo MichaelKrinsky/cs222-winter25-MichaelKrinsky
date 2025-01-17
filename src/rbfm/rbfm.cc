@@ -18,7 +18,17 @@ namespace PeterDB {
     RecordBasedFileManager::RecordBasedFileManager(const RecordBasedFileManager &) = default;
 
     RecordBasedFileManager &RecordBasedFileManager::operator=(const RecordBasedFileManager &) = default;
-
+    void printBytes(const std::vector<Attribute> &recordDescriptor,const void* data) {
+        const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
+        int total = 0;
+        for (int i = 0; i < recordDescriptor.size(); i++) {
+            total += recordDescriptor[i].length;
+            std::cout << recordDescriptor[i].name << recordDescriptor[i].length << std::endl;
+        }
+        for (int i = 0; i < total; i++) {
+            printf("%02X ", byteData[i]);  // %02X ensures two digits with leading zeros
+        }
+    }
     RC RecordBasedFileManager::createFile(const std::string &fileName) {
         PagedFileManager &pfm = PagedFileManager::instance();
         return pfm.createFile(fileName);
@@ -53,7 +63,15 @@ namespace PeterDB {
         // 4 (num cols) +  n /8 (null bits) + (4n - 1) (offsets)
         unsigned indexOfLastField = 4 + std::ceil(recordDescriptor.size() / 8.0) + 4 * (recordDescriptor.size() - 1);
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_case
-        unsigned newIndex = index + indexOfLastField + recordDescriptor[recordDescriptor.size() - 1].length;
+        unsigned newIndex;
+        if (recordDescriptor[recordDescriptor.size() - 1].type == TypeVarChar) {
+            int stringSize = 0;
+            std::memcpy(&stringSize, data + indexOfLastField, sizeof(int));
+            stringSize += 4;
+            newIndex = index + indexOfLastField + stringSize;
+        } else {
+            newIndex = index + indexOfLastField + recordDescriptor[recordDescriptor.size() - 1].length;
+        }
         return newIndex;
     }
     void RecordBasedFileManager::printPage(const void * data) {
@@ -62,15 +80,69 @@ namespace PeterDB {
             std::cout << byteData[i];
         }
     }
+    unsigned convertToNormalData(const char* dbData, const std::vector<Attribute> &recordDescriptor, void* data) {
+        std::cout << "Converting to Normal data" << std::endl;
+        int numFields = recordDescriptor.size();
+        unsigned char *byteData = reinterpret_cast<unsigned char*>(data);
+        int dbDataIndex = 4; // Index in bytes of dbData. Skip the numCols
+        int baseDataIndex = 0; // Index we're in for the base data.
+        // Get null bits
+        int numNullBytes = ceil(recordDescriptor.size() / 8.0);
+        std::cout << "Num null bytes: " << numNullBytes << std::endl;
+        for (int i = 0; i < numNullBytes; i++) {
+            byteData[baseDataIndex] = dbData[dbDataIndex];
+            dbDataIndex++;
+            baseDataIndex++; // Skip past the null bytes so we can start reading the data
+        }
+
+        dbDataIndex += 4 * numFields; // Skip past pointers;
+        //Add the rest of the data
+        for (int fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
+            // Handle null bit
+            size_t byteIndex = fieldIndex / 8;
+            size_t bitIndex = fieldIndex % 8;
+            unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
+            if (bit) {
+                std::cout << "NULL BIT is 1!" << std::endl;
+            }
+
+            // Copy all bytes of the current field
+            if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
+                int stringSize = 0;
+                std::memcpy(&stringSize, dbData + dbDataIndex, sizeof(int));
+                std::cout << recordDescriptor[fieldIndex].name << " size" << stringSize << std::endl;
+                stringSize += 4;
+                std::memcpy(byteData + baseDataIndex, dbData + dbDataIndex, stringSize);
+                dbDataIndex += stringSize;
+                baseDataIndex += stringSize;
+                std::cout << "Added string of length" << stringSize << std::endl;
+            } else {
+                for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
+                    if (bit != 1) {
+                        byteData[baseDataIndex] = dbData[dbDataIndex];
+                        dbDataIndex++;
+                        baseDataIndex++;
+                    }
+                }
+            }
+            std::cout << "Copied data over. Starting next field at: "<< baseDataIndex << std::endl;
+        }
+        std::cout << "Finished Converting to Normal" << std::endl;
+        printBytes(recordDescriptor,data);
+        return baseDataIndex;
+    }
+
+
     unsigned convertToDbData(const void* data, const std::vector<Attribute> &recordDescriptor, char* dbData) {
         int dbDataIndex = 0; // Index in bytes of dbData
         int baseDataIndex = 0; // Index we're in for the base data
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);
         std::cout << "Converting to db data: " << recordDescriptor.size() << std::endl;
         //get numCols
-        int *intDbData = reinterpret_cast<int*>(dbData);
+        int *intJustForNumColData = reinterpret_cast<int*>(dbData);
+        int *intDbData = reinterpret_cast<int*>(dbData + 5); // Shift to ignore the null bit and numCol
         int numCols = recordDescriptor.size();
-        intDbData[0] = numCols;
+        intJustForNumColData[0] = numCols;
         dbDataIndex += 4;
 
         // Get null bits
@@ -83,7 +155,6 @@ namespace PeterDB {
         }
 
         // Space for pointers
-        int pointersStartIndex = dbDataIndex; // Save the pointers start index and add the data
         dbDataIndex += numCols * 4; // Skip past the pointers
 
         std::cout << "Starting data section, dbDataIndex: " << dbDataIndex << std::endl;
@@ -97,18 +168,30 @@ namespace PeterDB {
             }
             std::cout << "Adding field of length" << recordDescriptor[fieldIndex].length << std::endl;
             // Add pointer to start of next Field
-            intDbData[pointersStartIndex + fieldIndex * 4] = dbDataIndex; // Add offset to the front for the field
+            intDbData[fieldIndex] = dbDataIndex;
             std::cout << "Pointer is: " <<  dbDataIndex << std::endl;
             // Copy all bytes of the current field
-            for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
-                if (bit != 1) {
-                    dbData[dbDataIndex] = byteData[baseDataIndex];
-                    dbDataIndex++;
-                    baseDataIndex++;
+
+            if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
+                std::cout << "string" << std::endl;
+                int stringSize = 0;
+                std::memcpy(&stringSize, byteData + baseDataIndex, sizeof(int));
+                stringSize += 4; // Add 4 bytes for storing string size
+                std::memcpy( dbData + dbDataIndex, byteData + baseDataIndex, stringSize);
+                dbDataIndex += stringSize;
+                baseDataIndex += stringSize;
+            } else {
+                for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
+                    if (bit != 1) {
+                        dbData[dbDataIndex] = byteData[baseDataIndex];
+                        dbDataIndex++;
+                        baseDataIndex++;
+                    }
                 }
             }
             std::cout << "Copied data over. Starting next field at: "<< dbDataIndex << std::endl;
         }
+        printBytes(recordDescriptor,dbData);
         return dbDataIndex;
     }
 
@@ -158,14 +241,14 @@ namespace PeterDB {
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
-        // const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_case
-        // for (int i =0; i < 4096 ; i++) {
-        //     std::cout << byteData[i];
-        // }
-        // createNewPage(fileHandle);
-        // insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
-        char newPage[PAGE_SIZE] = {0};
-        convertToDbData(data,recordDescriptor,newPage);
+        char newDbPage[PAGE_SIZE] = {0};
+        char newBasePage[PAGE_SIZE] = {0};
+        createNewPage(fileHandle);
+        insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
+        // char newDbPage[PAGE_SIZE] = {0};
+        // char newBasePage[PAGE_SIZE] = {0};
+        // convertToDbData(data,recordDescriptor,newDbPage);
+        // convertToNormalData(newDbPage, recordDescriptor, newBasePage);
         // std::cout << "INSERTING RECORD" << std::endl;
         // int fieldNullBytes = std::ceil(recordDescriptor.size() / 8.0);
         // int totalBytesNeeded = getTotalBytesNeeded(recordDescriptor);
@@ -193,38 +276,45 @@ namespace PeterDB {
         return -1;
     }
 
-        RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data,
+    RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data,
                                            std::ostream &out) {
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
-
-        int currentParsingIndex = std::ceil(recordDescriptor.size() / 8);
+        int currentParsingIndex = std::ceil(recordDescriptor.size() / 8.0);
         // Loop thru each attribute
         for (int attributeNum = 0; attributeNum < recordDescriptor.size(); attributeNum++) {
             // Get the NULL bit
             size_t byteIndex = attributeNum / 8;
             size_t bitIndex = attributeNum % 8;
             unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
-
+            std::cout << recordDescriptor[attributeNum].name << ":\\s";
             if (bit) {
-                if (attributeNum != 0) {
-                    std::cout << ",\\s";
-                }
-                std::cout << recordDescriptor[attributeNum].name << ":\\s" << "NULL";
+                std::cout << "NULL";
             } else {
-                std::vector<unsigned char> selectedBytes(recordDescriptor[attributeNum].length);  // Vector to hold selected bytes
-                for (size_t i = currentParsingIndex; i <= currentParsingIndex + recordDescriptor[attributeNum].length; ++i) {
-                    selectedBytes[i - currentParsingIndex] = byteData[i];  // Copy each byte into the vector
-                }
-                if (attributeNum != 0) {
-                    std::cout << ",\\s";
-                }
-                std::cout << recordDescriptor[attributeNum].name << ":\\s";
-                for (unsigned char c : selectedBytes) {
-                    std::cout << static_cast<int>(c) << " ";
+                if (recordDescriptor[attributeNum].type == TypeVarChar) {
+                    int stringSize = 0;
+                    std::memcpy(&stringSize, byteData + currentParsingIndex, sizeof(int));
+                    currentParsingIndex += 4;
+                    for (int i =0; i<stringSize; i++) {
+                        std::cout << byteData[currentParsingIndex + i];
+                    }
+                    currentParsingIndex += stringSize;
+                } else if ( recordDescriptor[attributeNum].type == TypeInt){
+                    int result = 0;
+                    std::memcpy(&result, byteData + currentParsingIndex, sizeof(int));
+                    currentParsingIndex += recordDescriptor[attributeNum].length;
+                    std::cout << result;
+                } else if ( recordDescriptor[attributeNum].type == TypeReal){
+                    float result = 0;
+                    std::memcpy(&result, byteData + currentParsingIndex, sizeof(float));
+                    currentParsingIndex += recordDescriptor[attributeNum].length;
+                    std::cout << result;
                 }
             }
+            if (attributeNum != recordDescriptor.size() - 1) {
+                std::cout << ",\\s";
+            }
         }
-        return -1;
+        return 1;
     }
 
     RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
