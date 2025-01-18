@@ -185,37 +185,43 @@ namespace PeterDB {
                                             const void *data, RID &rid, unsigned pageNum) {
         // Get page data
         char newPage[PAGE_SIZE] = {0};
-        fileHandle.readPage(0, newPage);
+        fileHandle.readPage(0, newPage); // broken for now
         printBytes(4096,newPage);
         // Convert data to what will go into db
         char dbData[PAGE_SIZE] = {0};
         int dbDataSize = convertToDbData(data, recordDescriptor, dbData);
-        // int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
+        int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
 
         // // Set slot directory index to the first index
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
-        unsigned int *intSlotDirectoryData = reinterpret_cast<unsigned int*>(newPage + slotDirectoryLocation); // Oth index is the N Rows spot
-        int slotDirectoryIndex = intSlotDirectoryData[0] * 2; // Each slot has 2 ints
 
-        std::cout << "Inserting into page with x slots: " << slotDirectoryIndex << std::endl;
-        //
+        int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
+        std::cout << "Last 8 bytes" << std::endl;
+        printBytes(8, intSlotDirectoryData);
+        int slotDirectoryIndex = intSlotDirectoryData[0]; // Each slot has 2 ints
+
+        std::cout << "Inserting into page with x slots: " << intSlotDirectoryData[0] << std::endl;
+        std:: cout << "Last 8 bytes" << std::endl;
+        printBytes(8, intSlotDirectoryData);
         // // Insert Data
         int startingDataIndex = 0;
         if (slotDirectoryIndex != 0) {
-            std::cout << intSlotDirectoryData[slotDirectoryIndex] << std::endl;
-            std::cout << intSlotDirectoryData[slotDirectoryIndex + 1] << std::endl;
+            std::cout << "Slot directory index is" << slotDirectoryIndex << std::endl;
+            std::cout << intSlotDirectoryData[-slotDirectoryIndex * 2] << std::endl;
+            std::cout << intSlotDirectoryData[-slotDirectoryIndex * 2 + 1] << std::endl;
             //Grab the offset and length of the previous slot directory
-            startingDataIndex = intSlotDirectoryData[slotDirectoryIndex];
-            startingDataIndex += intSlotDirectoryData[slotDirectoryIndex + 1];
+            startingDataIndex = intSlotDirectoryData[-slotDirectoryIndex * 2];
+            startingDataIndex += intSlotDirectoryData[-slotDirectoryIndex * 2 + 1];
         }
-        //
-        // std::cout << "Starting data index is: " << startingDataIndex << std::endl;
-        // std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
+        std::cout << "Starting data index is: " << startingDataIndex << std::endl;
+        std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
         // // Create the slot directory for the new element
-        // intSlotDirectoryData[slotDirectoryIndex - 2] = startingDataIndex; // Offset
-        // intSlotDirectoryData[slotDirectoryIndex - 1] = dbDataSize; // Length
-        // intSlotDirectoryData[0] += 1; // Increment numRecords counter
-        //
+
+        intSlotDirectoryData[-slotDirectoryIndex * 2 - 2] = startingDataIndex; // Offset
+        intSlotDirectoryData[-slotDirectoryIndex * 2 - 1] = dbDataSize; // Length
+        intSlotDirectoryData[0] += 1; // Increment numRecords counter
+        intSlotDirectoryData[1] -= totalDataSize;
+
         // // Save page
         fileHandle.writePage(pageNum, newPage);
         printBytes(4096,newPage);
@@ -252,7 +258,7 @@ namespace PeterDB {
                                             const void *data, RID &rid) {
         createNewPage(fileHandle);
         insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
-        // insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
+        insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
 
         // char newDbPage[PAGE_SIZE] = {0};
         // char newBasePage[PAGE_SIZE] = {0};

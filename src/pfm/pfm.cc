@@ -151,7 +151,6 @@ namespace PeterDB {
         std::size_t offset = pageNum * PAGE_SIZE;  // Calculate the offset
         fseek(file, 0, SEEK_END);
         long fileSize = ftell(file);
-        std::cout << "writing to file with size: " << fileSize << std::endl;
         fseek(file, 0, SEEK_SET);  // Reset cursor to start of file
         // Check if pageNum is within the file
         if (fileSize < offset + PAGE_SIZE) {
