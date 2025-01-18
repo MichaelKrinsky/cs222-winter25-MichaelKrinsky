@@ -189,7 +189,6 @@ namespace PeterDB {
             return 3;
         }
         appendPageCounter = appendPageCounter + 1;
-        std::cout << "successfully appended page to file" << std::endl;
         fseek(file, 0, SEEK_SET); // Reset cursor to start of file
         return 0;
     }

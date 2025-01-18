@@ -77,7 +77,6 @@ namespace PeterDB {
         }
     }
     unsigned convertToNormalData(const char* dbData, const std::vector<Attribute> &recordDescriptor, void* data) {
-        std::cout << "Converting to Normal data" << std::endl;
         int numFields = recordDescriptor.size();
         unsigned char *byteData = reinterpret_cast<unsigned char*>(data);
         int dbDataIndex = 4; // Index in bytes of dbData. Skip the numCols
@@ -96,7 +95,7 @@ namespace PeterDB {
             // Handle null bit
             size_t byteIndex = fieldIndex / 8;
             size_t bitIndex = fieldIndex % 8;
-            unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
+            unsigned char bit = (byteData[byteIndex] >> 7 - bitIndex) & 0x01;
             if (bit) {
                 std::cout << "NULL BIT is 1!" << std::endl;
             }
@@ -119,19 +118,14 @@ namespace PeterDB {
                 }
             }
         }
-        std::cout << "Finished Converting to Normal" << std::endl;
-        printBytes(PAGE_SIZE,data);
         return baseDataIndex;
     }
 
 
     unsigned convertToDbData(const void* data, const std::vector<Attribute> &recordDescriptor, char* dbData) {
-        std::cout << "Converting to DB data" << std::endl;
         int dbDataIndex = 0; // Index in bytes of dbData
         int baseDataIndex = 0; // Index we're in for the base data
-        printBytes(4098, data);
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);
-        std::cout << "Converting to db data" << std::endl;
         //get numCols
         int *intJustForNumColData = reinterpret_cast<int*>(dbData);
         int *intDbData = reinterpret_cast<int*>(dbData + 5); // Shift to ignore the null bit and numCol
@@ -154,7 +148,7 @@ namespace PeterDB {
         for (int fieldIndex = 0; fieldIndex < numCols; fieldIndex++) {
             size_t byteIndex = fieldIndex / 8;
             size_t bitIndex = fieldIndex % 8;
-            unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
+            unsigned char bit = (byteData[byteIndex] >> 7 - bitIndex) & 0x01;
             if (bit) {
                 std::cout << "NULL BIT is 1!" << std::endl;
             }
@@ -201,7 +195,6 @@ namespace PeterDB {
             fileHandle.readPage(i, newPage); // check page
             int freeSpaceInPage = intSlotDirectoryData[1];
             if (freeSpaceInPage > totalDataSize) {
-                std::cout << "Found free page" << freeSpaceInPage << std::endl;
                 pageNum = i;
                 break;
             }
@@ -213,7 +206,6 @@ namespace PeterDB {
             pageNum = fileHandle.getNumberOfPages() - 1;
             fileHandle.readPage(pageNum, newPage);
         }
-        std::cout << "Page number: " << pageNum << std::endl;
         // Set slot directory index to the first index
 
 
@@ -248,7 +240,6 @@ namespace PeterDB {
         newPage[numberOfIntsInPage - 2] = 0;
         newPage[numberOfIntsInPage - 1] = freeSpace; // 4(numrec) + 4(freeSpace)
         fileHandle.appendPage(newPage);
-        // printBytes(4096, newPage);
 
     }
     unsigned RecordBasedFileManager::getFreeSpaceSize(const void * data) {
@@ -301,7 +292,6 @@ namespace PeterDB {
                                            std::ostream &out) {
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
         int currentParsingIndex = std::ceil(recordDescriptor.size() / 8.0);
-        printBytes(4096, data);
         // Loop thru each attribute
         for (int attributeNum = 0; attributeNum < recordDescriptor.size(); attributeNum++) {
             // Get the NULL bit
