@@ -79,7 +79,7 @@ namespace PeterDB {
         RC closeFile(FileHandle &fileHandle);                               // Close a record-based file
 
         unsigned getTotalBytesNeeded(const std::vector<Attribute> &recordDescriptor);
-        void insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor, const void *data, RID &rid, unsigned pageNum);
+        void insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor, const void *data, RID &rid);
         void createNewPage(FileHandle &fileHandle);
         unsigned getFreeSpaceSize(const void * data);
         unsigned getNumRecordsInFile(const void * data);

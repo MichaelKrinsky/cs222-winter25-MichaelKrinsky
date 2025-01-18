@@ -182,38 +182,48 @@ namespace PeterDB {
     }
 
     void RecordBasedFileManager::insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
-                                            const void *data, RID &rid, unsigned pageNum) {
+                                            const void *data, RID &rid) {
         // Get page data
         char newPage[PAGE_SIZE] = {0};
-        fileHandle.readPage(0, newPage); // broken for now
-        printBytes(4096,newPage);
+
         // Convert data to what will go into db
         char dbData[PAGE_SIZE] = {0};
         int dbDataSize = convertToDbData(data, recordDescriptor, dbData);
         int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
 
-        // // Set slot directory index to the first index
+        // Find suitable page
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
+        int pageNum = -1;
+        for (int i = 0; i < fileHandle.getNumberOfPages(); i++) {
+            int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
+            fileHandle.readPage(i, newPage); // check page
+            int freeSpaceInPage = intSlotDirectoryData[1];
+            if (freeSpaceInPage > totalDataSize) {
+                std::cout << "Found free page" << freeSpaceInPage << std::endl;
+                pageNum = i;
+                break;
+            }
+        }
+
+        // If no page exists
+        if (pageNum == -1) {
+            createNewPage(fileHandle);
+            pageNum = fileHandle.getNumberOfPages() - 1;
+            fileHandle.readPage(pageNum, newPage);
+        }
+        std::cout << "Page number: " << pageNum << std::endl;
+        // Set slot directory index to the first index
+
 
         int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
-        std::cout << "Last 8 bytes" << std::endl;
-        printBytes(8, intSlotDirectoryData);
         int slotDirectoryIndex = intSlotDirectoryData[0]; // Each slot has 2 ints
-
-        std::cout << "Inserting into page with x slots: " << intSlotDirectoryData[0] << std::endl;
-        std:: cout << "Last 8 bytes" << std::endl;
-        printBytes(8, intSlotDirectoryData);
         // // Insert Data
         int startingDataIndex = 0;
         if (slotDirectoryIndex != 0) {
-            std::cout << "Slot directory index is" << slotDirectoryIndex << std::endl;
-            std::cout << intSlotDirectoryData[-slotDirectoryIndex * 2] << std::endl;
-            std::cout << intSlotDirectoryData[-slotDirectoryIndex * 2 + 1] << std::endl;
             //Grab the offset and length of the previous slot directory
             startingDataIndex = intSlotDirectoryData[-slotDirectoryIndex * 2];
             startingDataIndex += intSlotDirectoryData[-slotDirectoryIndex * 2 + 1];
         }
-        std::cout << "Starting data index is: " << startingDataIndex << std::endl;
         std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
         // // Create the slot directory for the new element
 
@@ -222,10 +232,12 @@ namespace PeterDB {
         intSlotDirectoryData[0] += 1; // Increment numRecords counter
         intSlotDirectoryData[1] -= totalDataSize;
 
+        // Set rid
+        rid.pageNum = 0;
+        rid.slotNum = slotDirectoryIndex;
         // // Save page
         fileHandle.writePage(pageNum, newPage);
         printBytes(4096,newPage);
-        std::cout << std::endl <<  "Num records" << getNumRecordsInFile(newPage) << std::endl;
 
     }
     void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
@@ -243,7 +255,6 @@ namespace PeterDB {
         size_t totalInts = 4096 / sizeof(int);
 
         int lastInt = intData[totalInts - 1];
-        std::cout << "got free space size: " << lastInt << std::endl;
         return static_cast<unsigned>(lastInt);
     }
     unsigned RecordBasedFileManager::getNumRecordsInFile(const void * data) {
@@ -256,34 +267,27 @@ namespace PeterDB {
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
-        createNewPage(fileHandle);
-        insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
-        insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
-
-        // char newDbPage[PAGE_SIZE] = {0};
-        // char newBasePage[PAGE_SIZE] = {0};
-        // convertToDbData(data,recordDescriptor,newDbPage);
-        // convertToNormalData(newDbPage, recordDescriptor, newBasePage);
-        // std::cout << "INSERTING RECORD" << std::endl;
-        // int fieldNullBytes = std::ceil(recordDescriptor.size() / 8.0);
-        // int totalBytesNeeded = getTotalBytesNeeded(recordDescriptor);
-        // int totalPages = fileHandle.getNumberOfPages();
-        // char pageData[PAGE_SIZE];
-        // // Look thru pages to find one with enough space
-        // for (unsigned pageNum = 0; pageNum < totalPages; pageNum++) {
-        //     fileHandle.readPage(pageNum,pageData);
-        //     int pageFreeSpace = 0; // TODO
-        //     if (pageFreeSpace < totalBytesNeeded) {
-        //
-        //     }
-        //
-        // }
-        return -1;
+        insertIntoPage(fileHandle, recordDescriptor,data,rid);
+        return 0;
     }
 
     RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                           const RID &rid, void *data) {
-        return -1;
+        if (fileHandle.getNumberOfPages() < rid.pageNum) {
+            return 2;
+        }
+        char newPage[PAGE_SIZE] = {0};
+        fileHandle.readPage(rid.pageNum, newPage);
+        int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
+        int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
+        if (intSlotDirectoryData[0] < rid.slotNum) {
+            return 3;
+        }
+        int offset = intSlotDirectoryData[-rid.slotNum * 2 - 2];
+        int length = intSlotDirectoryData[-rid.slotNum * 2 - 1];
+        std::memcpy(data, newPage + offset,length);
+        convertToNormalData((const char*)data,recordDescriptor,data);
+        return 0;
     }
 
     RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
@@ -301,32 +305,32 @@ namespace PeterDB {
             size_t byteIndex = attributeNum / 8;
             size_t bitIndex = attributeNum % 8;
             unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
-            std::cout << recordDescriptor[attributeNum].name << ":\\s";
+             out << recordDescriptor[attributeNum].name << ": ";
             if (bit) {
-                std::cout << "NULL";
+                out << "NULL";
             } else {
                 if (recordDescriptor[attributeNum].type == TypeVarChar) {
                     int stringSize = 0;
                     std::memcpy(&stringSize, byteData + currentParsingIndex, sizeof(int));
                     currentParsingIndex += 4;
                     for (int i =0; i<stringSize; i++) {
-                        std::cout << byteData[currentParsingIndex + i];
+                        out << byteData[currentParsingIndex + i];
                     }
                     currentParsingIndex += stringSize;
                 } else if ( recordDescriptor[attributeNum].type == TypeInt){
                     int result = 0;
                     std::memcpy(&result, byteData + currentParsingIndex, sizeof(int));
                     currentParsingIndex += recordDescriptor[attributeNum].length;
-                    std::cout << result;
+                    out << result;
                 } else if ( recordDescriptor[attributeNum].type == TypeReal){
                     float result = 0;
                     std::memcpy(&result, byteData + currentParsingIndex, sizeof(float));
                     currentParsingIndex += recordDescriptor[attributeNum].length;
-                    std::cout << result;
+                    out << result;
                 }
             }
             if (attributeNum != recordDescriptor.size() - 1) {
-                std::cout << ",\\s";
+                out << ", ";
             }
         }
         return 1;
