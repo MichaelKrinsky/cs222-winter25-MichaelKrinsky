@@ -171,7 +171,6 @@ namespace PeterDB {
             perror("Error writing to file");
         }
         writePageCounter = writePageCounter + 1;
-        std::cout << writePageCounter << std::endl;
         return 0;
     }
 

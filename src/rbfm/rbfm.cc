@@ -18,16 +18,12 @@ namespace PeterDB {
     RecordBasedFileManager::RecordBasedFileManager(const RecordBasedFileManager &) = default;
 
     RecordBasedFileManager &RecordBasedFileManager::operator=(const RecordBasedFileManager &) = default;
-    void printBytes(const std::vector<Attribute> &recordDescriptor,const void* data) {
+    void printBytes(int number,const void* data) {
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
-        int total = 0;
-        for (int i = 0; i < recordDescriptor.size(); i++) {
-            total += recordDescriptor[i].length;
-            std::cout << recordDescriptor[i].name << recordDescriptor[i].length << std::endl;
-        }
-        for (int i = 0; i < total; i++) {
+        for (int i = 0; i < number; i++) {
             printf("%02X ", byteData[i]);  // %02X ensures two digits with leading zeros
         }
+        std::cout << std::endl;
     }
     RC RecordBasedFileManager::createFile(const std::string &fileName) {
         PagedFileManager &pfm = PagedFileManager::instance();
@@ -88,7 +84,6 @@ namespace PeterDB {
         int baseDataIndex = 0; // Index we're in for the base data.
         // Get null bits
         int numNullBytes = ceil(recordDescriptor.size() / 8.0);
-        std::cout << "Num null bytes: " << numNullBytes << std::endl;
         for (int i = 0; i < numNullBytes; i++) {
             byteData[baseDataIndex] = dbData[dbDataIndex];
             dbDataIndex++;
@@ -110,12 +105,10 @@ namespace PeterDB {
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
                 int stringSize = 0;
                 std::memcpy(&stringSize, dbData + dbDataIndex, sizeof(int));
-                std::cout << recordDescriptor[fieldIndex].name << " size" << stringSize << std::endl;
                 stringSize += 4;
                 std::memcpy(byteData + baseDataIndex, dbData + dbDataIndex, stringSize);
                 dbDataIndex += stringSize;
                 baseDataIndex += stringSize;
-                std::cout << "Added string of length" << stringSize << std::endl;
             } else {
                 for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
                     if (bit != 1) {
@@ -125,10 +118,9 @@ namespace PeterDB {
                     }
                 }
             }
-            std::cout << "Copied data over. Starting next field at: "<< baseDataIndex << std::endl;
         }
         std::cout << "Finished Converting to Normal" << std::endl;
-        printBytes(recordDescriptor,data);
+        printBytes(PAGE_SIZE,data);
         return baseDataIndex;
     }
 
@@ -137,7 +129,7 @@ namespace PeterDB {
         int dbDataIndex = 0; // Index in bytes of dbData
         int baseDataIndex = 0; // Index we're in for the base data
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);
-        std::cout << "Converting to db data: " << recordDescriptor.size() << std::endl;
+        std::cout << "Converting to db data" << std::endl;
         //get numCols
         int *intJustForNumColData = reinterpret_cast<int*>(dbData);
         int *intDbData = reinterpret_cast<int*>(dbData + 5); // Shift to ignore the null bit and numCol
@@ -147,7 +139,6 @@ namespace PeterDB {
 
         // Get null bits
         int numNullBytes = ceil(recordDescriptor.size() / 8.0);
-        std::cout << "Num null bytes: " << numNullBytes << std::endl;
         for (int i = 0; i < numNullBytes; i++) {
             dbData[dbDataIndex + i] = byteData[i];
             dbDataIndex++;
@@ -157,7 +148,6 @@ namespace PeterDB {
         // Space for pointers
         dbDataIndex += numCols * 4; // Skip past the pointers
 
-        std::cout << "Starting data section, dbDataIndex: " << dbDataIndex << std::endl;
         //Put data
         for (int fieldIndex = 0; fieldIndex < numCols; fieldIndex++) {
             size_t byteIndex = fieldIndex / 8;
@@ -166,14 +156,11 @@ namespace PeterDB {
             if (bit) {
                 std::cout << "NULL BIT is 1!" << std::endl;
             }
-            std::cout << "Adding field of length" << recordDescriptor[fieldIndex].length << std::endl;
             // Add pointer to start of next Field
             intDbData[fieldIndex] = dbDataIndex;
-            std::cout << "Pointer is: " <<  dbDataIndex << std::endl;
             // Copy all bytes of the current field
 
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
-                std::cout << "string" << std::endl;
                 int stringSize = 0;
                 std::memcpy(&stringSize, byteData + baseDataIndex, sizeof(int));
                 stringSize += 4; // Add 4 bytes for storing string size
@@ -189,28 +176,50 @@ namespace PeterDB {
                     }
                 }
             }
-            std::cout << "Copied data over. Starting next field at: "<< dbDataIndex << std::endl;
+
         }
-        printBytes(recordDescriptor,dbData);
         return dbDataIndex;
     }
 
     void RecordBasedFileManager::insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid, unsigned pageNum) {
-        char * newPage[PAGE_SIZE];
-        fileHandle.readPage(pageNum, newPage);
-        unsigned numRecords = getNumRecordsInFile(data);
-        unsigned currentIndex = 0;
-        // Find the index of the start of free space
-        for (int i =0; i < numRecords; i++) {
-            std::cout << "Old index" << currentIndex ;
-            currentIndex = skipCurrentRecord(newPage, recordDescriptor, currentIndex);
-            std::cout << "new index" << currentIndex ;
-        }
-        char * newData[PAGE_SIZE] = {0};
+        // Get page data
+        char newPage[PAGE_SIZE] = {0};
+        fileHandle.readPage(0, newPage);
+        printBytes(4096,newPage);
+        // Convert data to what will go into db
+        char dbData[PAGE_SIZE] = {0};
+        int dbDataSize = convertToDbData(data, recordDescriptor, dbData);
+        // int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
 
-        // Update size
-        // Add pointer thing
+        // // Set slot directory index to the first index
+        int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
+        unsigned int *intSlotDirectoryData = reinterpret_cast<unsigned int*>(newPage + slotDirectoryLocation); // Oth index is the N Rows spot
+        int slotDirectoryIndex = intSlotDirectoryData[0] * 2; // Each slot has 2 ints
+
+        std::cout << "Inserting into page with x slots: " << slotDirectoryIndex << std::endl;
+        //
+        // // Insert Data
+        int startingDataIndex = 0;
+        if (slotDirectoryIndex != 0) {
+            std::cout << intSlotDirectoryData[slotDirectoryIndex] << std::endl;
+            std::cout << intSlotDirectoryData[slotDirectoryIndex + 1] << std::endl;
+            //Grab the offset and length of the previous slot directory
+            startingDataIndex = intSlotDirectoryData[slotDirectoryIndex];
+            startingDataIndex += intSlotDirectoryData[slotDirectoryIndex + 1];
+        }
+        //
+        // std::cout << "Starting data index is: " << startingDataIndex << std::endl;
+        // std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
+        // // Create the slot directory for the new element
+        // intSlotDirectoryData[slotDirectoryIndex - 2] = startingDataIndex; // Offset
+        // intSlotDirectoryData[slotDirectoryIndex - 1] = dbDataSize; // Length
+        // intSlotDirectoryData[0] += 1; // Increment numRecords counter
+        //
+        // // Save page
+        fileHandle.writePage(pageNum, newPage);
+        printBytes(4096,newPage);
+        std::cout << std::endl <<  "Num records" << getNumRecordsInFile(newPage) << std::endl;
 
     }
     void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
@@ -220,6 +229,7 @@ namespace PeterDB {
         newPage[numberOfIntsInPage - 2] = 0;
         newPage[numberOfIntsInPage - 1] = freeSpace; // 4(numrec) + 4(freeSpace)
         fileHandle.appendPage(newPage);
+        // printBytes(4096, newPage);
 
     }
     unsigned RecordBasedFileManager::getFreeSpaceSize(const void * data) {
@@ -235,16 +245,15 @@ namespace PeterDB {
         size_t totalInts = 4096 / sizeof(int);
 
         int lastInt = intData[totalInts - 2];
-        std::cout << "got free space size: " << lastInt << std::endl;
         return static_cast<unsigned>(lastInt);
     }
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
-        char newDbPage[PAGE_SIZE] = {0};
-        char newBasePage[PAGE_SIZE] = {0};
         createNewPage(fileHandle);
         insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
+        // insertIntoPage(fileHandle, recordDescriptor,data,rid,0);
+
         // char newDbPage[PAGE_SIZE] = {0};
         // char newBasePage[PAGE_SIZE] = {0};
         // convertToDbData(data,recordDescriptor,newDbPage);
