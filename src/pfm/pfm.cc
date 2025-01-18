@@ -130,7 +130,6 @@ namespace PeterDB {
         }
         std::size_t bytesRead = fread(data, 1, PAGE_SIZE, file);  // Read one page
         if (bytesRead > 0) {
-            std::cout << "Read " << bytesRead << " bytes from page " << pageNum << std::endl;
         } else {
             std::cerr << "Failed to read data from page " << pageNum << std::endl;
             fseek(file, 0, SEEK_SET); // Reset cursor to start of file

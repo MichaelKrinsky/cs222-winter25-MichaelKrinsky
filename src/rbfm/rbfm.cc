@@ -126,8 +126,10 @@ namespace PeterDB {
 
 
     unsigned convertToDbData(const void* data, const std::vector<Attribute> &recordDescriptor, char* dbData) {
+        std::cout << "Converting to DB data" << std::endl;
         int dbDataIndex = 0; // Index in bytes of dbData
         int baseDataIndex = 0; // Index we're in for the base data
+        printBytes(4098, data);
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);
         std::cout << "Converting to db data" << std::endl;
         //get numCols
@@ -237,7 +239,6 @@ namespace PeterDB {
         rid.slotNum = slotDirectoryIndex;
         // // Save page
         fileHandle.writePage(pageNum, newPage);
-        printBytes(4096,newPage);
 
     }
     void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
@@ -267,6 +268,7 @@ namespace PeterDB {
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
+        std::cout << "Inserting Record" << std::endl;
         insertIntoPage(fileHandle, recordDescriptor,data,rid);
         return 0;
     }
@@ -299,12 +301,13 @@ namespace PeterDB {
                                            std::ostream &out) {
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
         int currentParsingIndex = std::ceil(recordDescriptor.size() / 8.0);
+        printBytes(4096, data);
         // Loop thru each attribute
         for (int attributeNum = 0; attributeNum < recordDescriptor.size(); attributeNum++) {
             // Get the NULL bit
             size_t byteIndex = attributeNum / 8;
             size_t bitIndex = attributeNum % 8;
-            unsigned char bit = (byteData[byteIndex] >> bitIndex) & 0x01;
+            bool bit = (byteData[byteIndex] >> 7 - bitIndex) & 1;
              out << recordDescriptor[attributeNum].name << ": ";
             if (bit) {
                 out << "NULL";
