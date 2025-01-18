@@ -97,7 +97,7 @@ namespace PeterDB {
             size_t bitIndex = fieldIndex % 8;
             unsigned char bit = (byteData[byteIndex] >> 7 - bitIndex) & 0x01;
             if (bit) {
-                std::cout << "NULL BIT is 1!" << std::endl;
+                std::cout << "NULL BIT is 1!" << recordDescriptor[fieldIndex].name <<  std::endl;
             }
 
             // Copy all bytes of the current field
@@ -150,19 +150,21 @@ namespace PeterDB {
             size_t bitIndex = fieldIndex % 8;
             unsigned char bit = (byteData[byteIndex] >> 7 - bitIndex) & 0x01;
             if (bit) {
-                std::cout << "NULL BIT is 1!" << std::endl;
+                std::cout << "NULL BIT is 1 for "<< recordDescriptor[fieldIndex].name << std::endl;
             }
             // Add pointer to start of next Field
             intDbData[fieldIndex] = dbDataIndex;
             // Copy all bytes of the current field
 
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
-                int stringSize = 0;
-                std::memcpy(&stringSize, byteData + baseDataIndex, sizeof(int));
-                stringSize += 4; // Add 4 bytes for storing string size
-                std::memcpy( dbData + dbDataIndex, byteData + baseDataIndex, stringSize);
-                dbDataIndex += stringSize;
-                baseDataIndex += stringSize;
+                if (bit != 1) {
+                    int stringSize = 0;
+                    std::memcpy(&stringSize, byteData + baseDataIndex, sizeof(int));
+                    stringSize += 4; // Add 4 bytes for storing string size
+                    std::memcpy( dbData + dbDataIndex, byteData + baseDataIndex, stringSize);
+                    dbDataIndex += stringSize;
+                    baseDataIndex += stringSize;
+                }
             } else {
                 for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
                     if (bit != 1) {
@@ -186,11 +188,12 @@ namespace PeterDB {
         char dbData[PAGE_SIZE] = {0};
         int dbDataSize = convertToDbData(data, recordDescriptor, dbData);
         int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
-
+        // printBytes(PAGE_SIZE, dbData);
         // Find suitable page
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
         int pageNum = -1;
-        for (int i = 0; i < fileHandle.getNumberOfPages(); i++) {
+        int numPages = fileHandle.getNumberOfPages();
+        for (int i = 0; i < numPages; i++) {
             int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
             fileHandle.readPage(i, newPage); // check page
             int freeSpaceInPage = intSlotDirectoryData[1];
@@ -259,13 +262,18 @@ namespace PeterDB {
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
+        // printRecord(recordDescriptor,data,std::cout);
         std::cout << "Inserting Record" << std::endl;
+        int numPages = fileHandle.getNumberOfPages();
         insertIntoPage(fileHandle, recordDescriptor,data,rid);
         return 0;
     }
 
     RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                           const RID &rid, void *data) {
+        std::cout << "Reading record" << std::endl;
+        printBytes(PAGE_SIZE,data);
+
         if (fileHandle.getNumberOfPages() < rid.pageNum) {
             return 2;
         }
@@ -280,6 +288,8 @@ namespace PeterDB {
         int length = intSlotDirectoryData[-rid.slotNum * 2 - 1];
         std::memcpy(data, newPage + offset,length);
         convertToNormalData((const char*)data,recordDescriptor,data);
+        std::cout << "fixed" << std::endl;
+        printBytes(PAGE_SIZE, data);
         return 0;
     }
 
@@ -300,6 +310,7 @@ namespace PeterDB {
             bool bit = (byteData[byteIndex] >> 7 - bitIndex) & 1;
              out << recordDescriptor[attributeNum].name << ": ";
             if (bit) {
+                std::cout << "Attribute x is NULL" << attributeNum << recordDescriptor[attributeNum].name << std::endl;
                 out << "NULL";
             } else {
                 if (recordDescriptor[attributeNum].type == TypeVarChar) {
@@ -326,7 +337,7 @@ namespace PeterDB {
                 out << ", ";
             }
         }
-        return 1;
+        return 0;
     }
 
     RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
