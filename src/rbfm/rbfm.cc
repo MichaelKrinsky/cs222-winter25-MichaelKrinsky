@@ -77,6 +77,7 @@ namespace PeterDB {
         }
     }
     unsigned convertToNormalData(const char* dbData, const std::vector<Attribute> &recordDescriptor, void* data) {
+        // std::cout << "Converting to normal data" << std::endl;
         int numFields = recordDescriptor.size();
         unsigned char *byteData = reinterpret_cast<unsigned char*>(data);
         int dbDataIndex = 4; // Index in bytes of dbData. Skip the numCols
@@ -88,7 +89,6 @@ namespace PeterDB {
             dbDataIndex++;
             baseDataIndex++; // Skip past the null bytes so we can start reading the data
         }
-
         dbDataIndex += 4 * numFields; // Skip past pointers;
         //Add the rest of the data
         for (int fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
@@ -126,17 +126,18 @@ namespace PeterDB {
         int dbDataIndex = 0; // Index in bytes of dbData
         int baseDataIndex = 0; // Index we're in for the base data
         const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);
+        int numNullBytes = ceil(recordDescriptor.size() / 8.0);
+
         //get numCols
         int *intJustForNumColData = reinterpret_cast<int*>(dbData);
-        int *intDbData = reinterpret_cast<int*>(dbData + 5); // Shift to ignore the null bit and numCol
+        int *intDbData = reinterpret_cast<int*>(dbData + 4 + numNullBytes); // Shift to ignore the null bit and numCol
         int numCols = recordDescriptor.size();
         intJustForNumColData[0] = numCols;
         dbDataIndex += 4;
 
         // Get null bits
-        int numNullBytes = ceil(recordDescriptor.size() / 8.0);
         for (int i = 0; i < numNullBytes; i++) {
-            dbData[dbDataIndex + i] = byteData[i];
+            dbData[dbDataIndex] = byteData[baseDataIndex];
             dbDataIndex++;
             baseDataIndex++; // Skip past the null bytes so we can start reading the data
         }
@@ -144,18 +145,19 @@ namespace PeterDB {
         // Space for pointers
         dbDataIndex += numCols * 4; // Skip past the pointers
 
-        //Put data
+        // Insert data
         for (int fieldIndex = 0; fieldIndex < numCols; fieldIndex++) {
+            // Find null bit for field
             size_t byteIndex = fieldIndex / 8;
             size_t bitIndex = fieldIndex % 8;
             unsigned char bit = (byteData[byteIndex] >> 7 - bitIndex) & 0x01;
             if (bit) {
                 std::cout << "NULL BIT is 1 for "<< recordDescriptor[fieldIndex].name << std::endl;
             }
-            // Add pointer to start of next Field
-            intDbData[fieldIndex] = dbDataIndex;
-            // Copy all bytes of the current field
 
+            intDbData[fieldIndex] = dbDataIndex; // Add pointer to start of next Field
+
+            // Copy all bytes of the current field
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
                 if (bit != 1) {
                     int stringSize = 0;
@@ -174,7 +176,6 @@ namespace PeterDB {
                     }
                 }
             }
-
         }
         return dbDataIndex;
     }
@@ -188,7 +189,7 @@ namespace PeterDB {
         char dbData[PAGE_SIZE] = {0};
         int dbDataSize = convertToDbData(data, recordDescriptor, dbData);
         int totalDataSize = dbDataSize + 4 + 4; // data + slot directory
-        // printBytes(PAGE_SIZE, dbData);
+
         // Find suitable page
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
         int pageNum = -1;
@@ -209,12 +210,12 @@ namespace PeterDB {
             pageNum = fileHandle.getNumberOfPages() - 1;
             fileHandle.readPage(pageNum, newPage);
         }
-        // Set slot directory index to the first index
 
-
+        // Get to slot directory
         int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
         int slotDirectoryIndex = intSlotDirectoryData[0]; // Each slot has 2 ints
-        // // Insert Data
+
+        // Insert Data
         int startingDataIndex = 0;
         if (slotDirectoryIndex != 0) {
             //Grab the offset and length of the previous slot directory
@@ -222,20 +223,21 @@ namespace PeterDB {
             startingDataIndex += intSlotDirectoryData[-slotDirectoryIndex * 2 + 1];
         }
         std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
-        // // Create the slot directory for the new element
 
+        // Create the slot directory for the new element
         intSlotDirectoryData[-slotDirectoryIndex * 2 - 2] = startingDataIndex; // Offset
         intSlotDirectoryData[-slotDirectoryIndex * 2 - 1] = dbDataSize; // Length
         intSlotDirectoryData[0] += 1; // Increment numRecords counter
         intSlotDirectoryData[1] -= totalDataSize;
 
         // Set rid
-        rid.pageNum = 0;
+        rid.pageNum = pageNum;
         rid.slotNum = slotDirectoryIndex;
-        // // Save page
-        fileHandle.writePage(pageNum, newPage);
 
+        // Save page
+        fileHandle.writePage(pageNum, newPage);
     }
+
     void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
         int numberOfIntsInPage = PAGE_SIZE / 4;
         int freeSpace = PAGE_SIZE - 8;
@@ -262,23 +264,20 @@ namespace PeterDB {
 
     RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
-        // printRecord(recordDescriptor,data,std::cout);
-        std::cout << "Inserting Record" << std::endl;
-        int numPages = fileHandle.getNumberOfPages();
         insertIntoPage(fileHandle, recordDescriptor,data,rid);
         return 0;
     }
 
     RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                           const RID &rid, void *data) {
-        std::cout << "Reading record" << std::endl;
-        printBytes(PAGE_SIZE,data);
-
         if (fileHandle.getNumberOfPages() < rid.pageNum) {
             return 2;
         }
+        // Read page with record on it
         char newPage[PAGE_SIZE] = {0};
         fileHandle.readPage(rid.pageNum, newPage);
+
+        // Move to slot directory
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
         int *intSlotDirectoryData = (int*) (newPage + slotDirectoryLocation); // Oth index is the N Rows spot
         if (intSlotDirectoryData[0] < rid.slotNum) {
@@ -286,10 +285,12 @@ namespace PeterDB {
         }
         int offset = intSlotDirectoryData[-rid.slotNum * 2 - 2];
         int length = intSlotDirectoryData[-rid.slotNum * 2 - 1];
-        std::memcpy(data, newPage + offset,length);
-        convertToNormalData((const char*)data,recordDescriptor,data);
-        std::cout << "fixed" << std::endl;
-        printBytes(PAGE_SIZE, data);
+        char holdingPage[PAGE_SIZE] = {0};
+
+        // Get record and convert
+        std::memcpy(holdingPage, newPage + offset,length);
+        int bytesTotal = convertToNormalData(newPage + offset,recordDescriptor,holdingPage);
+        std::memcpy(data, holdingPage,bytesTotal);
         return 0;
     }
 
@@ -310,7 +311,6 @@ namespace PeterDB {
             bool bit = (byteData[byteIndex] >> 7 - bitIndex) & 1;
              out << recordDescriptor[attributeNum].name << ": ";
             if (bit) {
-                std::cout << "Attribute x is NULL" << attributeNum << recordDescriptor[attributeNum].name << std::endl;
                 out << "NULL";
             } else {
                 if (recordDescriptor[attributeNum].type == TypeVarChar) {

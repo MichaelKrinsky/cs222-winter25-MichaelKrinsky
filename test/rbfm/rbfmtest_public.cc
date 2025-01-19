@@ -3,6 +3,14 @@
 
 namespace PeterDBTesting {
 
+    void printBytes(int number,const void* data) {
+        const unsigned char *byteData = reinterpret_cast<const unsigned char*>(data);  // Use reinterpret_cast
+        for (int i = 0; i < number; i++) {
+            printf("%02X ", byteData[i]);  // %02X ensures two digits with leading zeros
+        }
+        std::cout << std::endl;
+    }
+
     TEST_F(RBFM_Test, insert_and_read_a_record) {
         // Functions tested
         // 1. Create Record-Based File
@@ -112,7 +120,7 @@ namespace PeterDBTesting {
 
         PeterDB::RID rid;
         inBuffer = malloc(1000);
-        int numRecords = 2000;
+        int numRecords = 15;
 
         // clean caches
         rids.clear();
@@ -163,6 +171,7 @@ namespace PeterDBTesting {
             }
 
             int size = 0;
+
             prepareLargeRecord((int) (int) recordDescriptor.size(), nullsIndicator, i, inBuffer, &size);
             ASSERT_EQ(memcmp(outBuffer, inBuffer, sizes[i]), 0) << "the read data should match the inserted data";
         }

@@ -66,6 +66,7 @@ namespace PeterDB {
         if (file == nullptr) {
             return 1;
         }
+
         // Check if fileHandle already has a file
         if (fileHandle.file != nullptr) {
             return 2;
@@ -151,7 +152,6 @@ namespace PeterDB {
     }
 
     RC FileHandle::writePage(PageNum pageNum, const void *data) {
-        std::cout << "write file" << std::endl;
         pageNum = pageNum + 1; // Ignore first page
         // If file exists
         if (!file) {
@@ -184,7 +184,6 @@ namespace PeterDB {
     }
 
     RC FileHandle::appendPage(const void *data) {
-        std::cout << "append file " << std::endl;
         if (!file) {
             std::cerr << "Failed to open file: " << std::endl;
             return 1;
