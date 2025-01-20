@@ -182,7 +182,7 @@ namespace PeterDB {
 
     void RecordBasedFileManager::insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
-        std::cout <<"inserting" << std::endl;
+        std::cout <<"Inserting Record" << std::endl;
         // Get page data
         char newPage[PAGE_SIZE] = {0};
 
@@ -278,8 +278,6 @@ namespace PeterDB {
         // Read page with record on it
         char newPage[PAGE_SIZE] = {0};
         fileHandle.readPage(rid.pageNum, newPage);
-        std::cout << "The page is:";
-        printBytes(4096, newPage);
 
         // Move to slot directory
         int slotDirectoryLocation = PAGE_SIZE - 8; // - 4(num records) - 4(space free)
