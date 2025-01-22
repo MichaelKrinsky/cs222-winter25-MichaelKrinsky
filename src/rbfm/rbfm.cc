@@ -62,7 +62,7 @@ namespace PeterDB {
         unsigned newIndex;
         if (recordDescriptor[recordDescriptor.size() - 1].type == TypeVarChar) {
             int stringSize = 0;
-            std::memcpy(&stringSize, data + indexOfLastField, sizeof(int));
+            std::memmove(&stringSize, data + indexOfLastField, sizeof(int));
             stringSize += 4;
             newIndex = index + indexOfLastField + stringSize;
         } else {
@@ -77,7 +77,7 @@ namespace PeterDB {
         }
     }
     unsigned convertToNormalData(const char* dbData, const std::vector<Attribute> &recordDescriptor, void* data) {
-        // std::cout << "Converting to normal data" << std::endl;
+        printBytes(PAGE_SIZE, dbData);
         int numFields = recordDescriptor.size();
         unsigned char *byteData = reinterpret_cast<unsigned char*>(data);
         int dbDataIndex = 4; // Index in bytes of dbData. Skip the numCols
@@ -102,12 +102,14 @@ namespace PeterDB {
 
             // Copy all bytes of the current field
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
-                int stringSize = 0;
-                std::memcpy(&stringSize, dbData + dbDataIndex, sizeof(int));
-                stringSize += 4;
-                std::memcpy(byteData + baseDataIndex, dbData + dbDataIndex, stringSize);
-                dbDataIndex += stringSize;
-                baseDataIndex += stringSize;
+                if (bit != 1) {
+                    int stringSize = 0;
+                    std::memmove(&stringSize, dbData + dbDataIndex, sizeof(int));
+                    stringSize += 4;
+                    std::memmove(byteData + baseDataIndex, dbData + dbDataIndex, stringSize);
+                    dbDataIndex += stringSize;
+                    baseDataIndex += stringSize;
+                }
             } else {
                 for (int fieldByte = 0; fieldByte < recordDescriptor[fieldIndex].length; fieldByte++) {
                     if (bit != 1) {
@@ -134,7 +136,6 @@ namespace PeterDB {
         int numCols = recordDescriptor.size();
         intJustForNumColData[0] = numCols;
         dbDataIndex += 4;
-
         // Get null bits
         for (int i = 0; i < numNullBytes; i++) {
             dbData[dbDataIndex] = byteData[baseDataIndex];
@@ -161,9 +162,9 @@ namespace PeterDB {
             if ( recordDescriptor[fieldIndex].type == TypeVarChar) {
                 if (bit != 1) {
                     int stringSize = 0;
-                    std::memcpy(&stringSize, byteData + baseDataIndex, sizeof(int));
+                    std::memmove(&stringSize, byteData + baseDataIndex, sizeof(int));
                     stringSize += 4; // Add 4 bytes for storing string size
-                    std::memcpy( dbData + dbDataIndex, byteData + baseDataIndex, stringSize);
+                    std::memmove( dbData + dbDataIndex, byteData + baseDataIndex, stringSize);
                     dbDataIndex += stringSize;
                     baseDataIndex += stringSize;
                 }
@@ -180,7 +181,31 @@ namespace PeterDB {
         return dbDataIndex;
     }
 
-    void RecordBasedFileManager::insertIntoPage(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
+    void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
+        int numberOfIntsInPage = PAGE_SIZE / 4;
+        int freeSpace = PAGE_SIZE - 8;
+        int newPage[numberOfIntsInPage] = {0};
+        newPage[numberOfIntsInPage - 2] = 0;
+        newPage[numberOfIntsInPage - 1] = freeSpace; // 4(numrec) + 4(freeSpace)
+        fileHandle.appendPage(newPage);
+
+    }
+    unsigned RecordBasedFileManager::getFreeSpaceSize(const void * data) {
+        const int *intData = static_cast<const int*>(data);
+        size_t totalInts = 4096 / sizeof(int);
+
+        int lastInt = intData[totalInts - 1];
+        return static_cast<unsigned>(lastInt);
+    }
+    unsigned RecordBasedFileManager::getNumRecordsInFile(const void * data) {
+        const int *intData = static_cast<const int*>(data);
+        size_t totalInts = 4096 / sizeof(int);
+
+        int lastInt = intData[totalInts - 2];
+        return static_cast<unsigned>(lastInt);
+    }
+
+    RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                             const void *data, RID &rid) {
         std::cout <<"Inserting Record" << std::endl;
         // Get page data
@@ -223,7 +248,7 @@ namespace PeterDB {
             startingDataIndex = intSlotDirectoryData[-slotDirectoryIndex * 2];
             startingDataIndex += intSlotDirectoryData[-slotDirectoryIndex * 2 + 1];
         }
-        std::memcpy(newPage + startingDataIndex, dbData, dbDataSize);
+        std::memmove(newPage + startingDataIndex, dbData, dbDataSize);
 
         // Create the slot directory for the new element
         intSlotDirectoryData[-slotDirectoryIndex * 2 - 2] = startingDataIndex; // Offset
@@ -237,35 +262,6 @@ namespace PeterDB {
 
         // Save page
         fileHandle.writePage(pageNum, newPage);
-    }
-
-    void RecordBasedFileManager::createNewPage(FileHandle &fileHandle) {
-        int numberOfIntsInPage = PAGE_SIZE / 4;
-        int freeSpace = PAGE_SIZE - 8;
-        int newPage[numberOfIntsInPage] = {0};
-        newPage[numberOfIntsInPage - 2] = 0;
-        newPage[numberOfIntsInPage - 1] = freeSpace; // 4(numrec) + 4(freeSpace)
-        fileHandle.appendPage(newPage);
-
-    }
-    unsigned RecordBasedFileManager::getFreeSpaceSize(const void * data) {
-        const int *intData = static_cast<const int*>(data);
-        size_t totalInts = 4096 / sizeof(int);
-
-        int lastInt = intData[totalInts - 1];
-        return static_cast<unsigned>(lastInt);
-    }
-    unsigned RecordBasedFileManager::getNumRecordsInFile(const void * data) {
-        const int *intData = static_cast<const int*>(data);
-        size_t totalInts = 4096 / sizeof(int);
-
-        int lastInt = intData[totalInts - 2];
-        return static_cast<unsigned>(lastInt);
-    }
-
-    RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
-                                            const void *data, RID &rid) {
-        insertIntoPage(fileHandle, recordDescriptor,data,rid);
         return 0;
     }
 
@@ -275,6 +271,7 @@ namespace PeterDB {
         if (fileHandle.getNumberOfPages() < rid.pageNum) {
             return 2;
         }
+
         // Read page with record on it
         char newPage[PAGE_SIZE] = {0};
         fileHandle.readPage(rid.pageNum, newPage);
@@ -288,19 +285,13 @@ namespace PeterDB {
         int offset = intSlotDirectoryData[-rid.slotNum * 2 - 2];
         int length = intSlotDirectoryData[-rid.slotNum * 2 - 1];
         char holdingPage[PAGE_SIZE] = {0};
-
         // Get record and convert
-        std::memcpy(holdingPage, newPage + offset,length);
-        int bytesTotal = convertToNormalData(newPage + offset,recordDescriptor,holdingPage);
-        std::memcpy(data, holdingPage,bytesTotal);
+        std::memmove(holdingPage, newPage + offset,length);
+        int bytesTotal = convertToNormalData(newPage + offset, recordDescriptor, holdingPage);
+        std::memmove(data, holdingPage,bytesTotal);
         std::cout << "Finished";
         printRecord(recordDescriptor,data, std::cout);
         return 0;
-    }
-
-    RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
-                                            const RID &rid) {
-        return -1;
     }
 
     RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data,
@@ -319,7 +310,7 @@ namespace PeterDB {
             } else {
                 if (recordDescriptor[attributeNum].type == TypeVarChar) {
                     int stringSize = 0;
-                    std::memcpy(&stringSize, byteData + currentParsingIndex, sizeof(int));
+                    std::memmove(&stringSize, byteData + currentParsingIndex, sizeof(int));
                     currentParsingIndex += 4;
                     for (int i =0; i<stringSize; i++) {
                         out << byteData[currentParsingIndex + i];
@@ -327,12 +318,12 @@ namespace PeterDB {
                     currentParsingIndex += stringSize;
                 } else if ( recordDescriptor[attributeNum].type == TypeInt){
                     int result = 0;
-                    std::memcpy(&result, byteData + currentParsingIndex, sizeof(int));
+                    std::memmove(&result, byteData + currentParsingIndex, sizeof(int));
                     currentParsingIndex += recordDescriptor[attributeNum].length;
                     out << result;
                 } else if ( recordDescriptor[attributeNum].type == TypeReal){
                     float result = 0;
-                    std::memcpy(&result, byteData + currentParsingIndex, sizeof(float));
+                    std::memmove(&result, byteData + currentParsingIndex, sizeof(float));
                     currentParsingIndex += recordDescriptor[attributeNum].length;
                     out << result;
                 }
@@ -342,6 +333,11 @@ namespace PeterDB {
             }
         }
         return 0;
+    }
+
+    RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
+                                        const RID &rid) {
+        return -1;
     }
 
     RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
